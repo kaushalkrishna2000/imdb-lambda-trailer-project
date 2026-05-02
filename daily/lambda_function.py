@@ -1,3 +1,5 @@
+"""AWS Lambda handler that scrapes IMDb trailers and upserts one document per calendar day into MongoDB."""
+
 import json
 import logging
 
@@ -11,6 +13,25 @@ logger.setLevel("INFO")
 
 
 def lambda_handler(event, context):
+    """Scrape IMDb trailers and upsert the result as a daily snapshot in MongoDB.
+
+    Fetches the current IST timestamp from WorldTimeAPI, scrapes visible trailer
+    titles from the IMDb trailers page, then upserts a single document into the
+    ``daily`` collection keyed by ``(date, month, year)``. Re-running on the same
+    calendar day overwrites the existing document (idempotent via
+    ``find_one_and_replace`` with ``upsert=True``).
+
+    Args:
+        event (dict): Lambda invocation payload (unused — function is schedule-triggered).
+        context (LambdaContext): Lambda runtime context (unused).
+
+    Returns:
+        dict: HTTP-style response with ``statusCode`` 200 and a success message body.
+
+    Side effects:
+        - Upserts one document into the MongoDB ``daily`` collection.
+        - Logs scrape metadata and the MongoDB response at INFO level.
+    """
     db = get_db()
     collection = db.get_collection(DAILY_COLLECTION)
 

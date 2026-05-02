@@ -1,3 +1,5 @@
+"""AWS Lambda handler that aggregates weekly trailer summaries into a monthly totals document in MongoDB."""
+
 import json
 import logging
 
@@ -10,6 +12,31 @@ logger.setLevel("INFO")
 
 
 def lambda_handler(event, context):
+    """Aggregate weekly trailer summaries for the current month into a single monthly totals document.
+
+    Queries all documents in the ``weekly`` collection where ``month`` matches
+    the current calendar month, sums the per-title occurrence counts across all
+    matching weeks, and upserts a single summary document into the ``monthly``
+    collection keyed by ``(month, year)``. Re-running within the same month
+    overwrites the existing document (idempotent via ``find_one_and_replace``
+    with ``upsert=True``).
+
+    Depends on the weekly Lambda having already run for the relevant weeks; if
+    no weekly documents exist for the current month the upserted document will
+    have an empty ``details`` dict.
+
+    Args:
+        event (dict): Lambda invocation payload (unused — function is schedule-triggered).
+        context (LambdaContext): Lambda runtime context (unused).
+
+    Returns:
+        dict: HTTP-style response with ``statusCode`` 200 and a success message body.
+
+    Side effects:
+        - Reads all matching documents from the MongoDB ``weekly`` collection.
+        - Upserts one document into the MongoDB ``monthly`` collection.
+        - Logs aggregation metadata and the MongoDB response at INFO level.
+    """
     db = get_db()
     collection_weekly = db.get_collection(WEEKLY_COLLECTION)
     collection_monthly = db.get_collection(MONTHLY_COLLECTION)

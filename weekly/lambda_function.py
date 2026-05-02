@@ -1,3 +1,5 @@
+"""AWS Lambda handler that aggregates daily trailer snapshots into a weekly occurrence-count document in MongoDB."""
+
 import json
 import logging
 
@@ -10,6 +12,31 @@ logger.setLevel("INFO")
 
 
 def lambda_handler(event, context):
+    """Aggregate daily trailer documents for the current ISO week into a weekly summary.
+
+    Queries all documents in the ``daily`` collection that share the current
+    ``week_number``, counts how many days each trailer title appeared across
+    those documents, and upserts a single summary document into the ``weekly``
+    collection keyed by ``week_number``. Re-running within the same week
+    overwrites the existing document (idempotent via ``find_one_and_replace``
+    with ``upsert=True``).
+
+    Depends on the daily Lambda having already run for the relevant days; if
+    no daily documents exist for the current week the upserted document will
+    have an empty ``details`` dict and ``week_range`` list.
+
+    Args:
+        event (dict): Lambda invocation payload (unused — function is schedule-triggered).
+        context (LambdaContext): Lambda runtime context (unused).
+
+    Returns:
+        dict: HTTP-style response with ``statusCode`` 200 and a success message body.
+
+    Side effects:
+        - Reads all matching documents from the MongoDB ``daily`` collection.
+        - Upserts one document into the MongoDB ``weekly`` collection.
+        - Logs aggregation metadata and the MongoDB response at INFO level.
+    """
     db = get_db()
     collection_daily = db.get_collection(DAILY_COLLECTION)
     collection_weekly = db.get_collection(WEEKLY_COLLECTION)

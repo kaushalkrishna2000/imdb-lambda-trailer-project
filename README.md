@@ -4,6 +4,36 @@ Tracks IMDb's trending trailers over time using three AWS Lambda functions that 
 
 ---
 
+## Quick Start (local)
+
+```bash
+git clone <repo-url>
+cd imdb-lambda-trailer-project
+
+python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+
+export MONGO_URI="mongodb+srv://user:pass@cluster.mongodb.net"   # Windows CMD: set MONGO_URI=...
+
+python -m default.main_script
+```
+
+This runs one scrape-and-insert cycle against your Atlas `daily` collection. No Lambda deployment required for local testing.
+
+---
+
+## How It Works
+
+The pipeline runs in three stages, each triggered by a scheduled AWS EventBridge rule:
+
+1. **Daily** — `daily/lambda_function.py` scrapes the [IMDb trailers page](https://www.imdb.com/trailers/) for poster-card titles, fetches the current IST timestamp from [WorldTimeAPI](https://worldtimeapi.org/), and upserts one document per calendar day into the `daily` collection (keyed by `date + month + year`).
+2. **Weekly** — `weekly/lambda_function.py` queries all `daily` documents sharing the current ISO `week_number`, counts how many days each title appeared, and upserts a summary document into the `weekly` collection (keyed by `week_number`).
+3. **Monthly** — `monthly/lambda_function.py` queries all `weekly` documents for the current `month`, sums the per-title counts across weeks, and upserts a summary document into the `monthly` collection (keyed by `month + year`).
+
+The result is a layered dataset: raw daily snapshots roll up into weekly occurrence counts, which roll up into monthly totals — making it easy to see which trailers dominated any given period.
+
+---
+
 ## Architecture
 
 ```mermaid
@@ -255,6 +285,34 @@ Configure EventBridge (CloudWatch Events) rules to trigger them in this sequence
 
 ---
 
+## Scheduling with EventBridge
+
+Create one EventBridge (CloudWatch Events) scheduled rule per Lambda. IST is UTC+5:30, so all cron expressions below are in UTC.
+
+### Daily Lambda — every day at 23:55 IST (18:25 UTC)
+
+1. AWS Console → **EventBridge → Rules → Create rule**.
+2. **Rule type**: Schedule. **Schedule pattern**: Cron expression.
+3. Cron: `25 18 * * ? *`
+4. **Target**: Lambda function → select `daily-lambda` (or your function name).
+5. Click **Create**.
+
+### Weekly Lambda — every Sunday at 23:58 IST (18:28 UTC)
+
+Runs after the daily Lambda has already upserted Sunday's document.
+
+Cron: `28 18 ? * SUN *`
+
+### Monthly Lambda — last day of each month at 23:59 IST (18:29 UTC)
+
+EventBridge does not natively support "last day of month". Use the 28th as a safe approximation (valid for all months), or use a Step Functions state machine if exact last-day triggering is required.
+
+Cron (28th of every month): `29 18 28 * ? *`
+
+> **Tip:** You can test any Lambda manually at any time via **Test** in the Lambda console without waiting for the schedule.
+
+---
+
 ## Local Development
 
 Use `default/main_script.py` to test the scraper and MongoDB connection without deploying to Lambda.
@@ -313,3 +371,15 @@ This runs the same daily scrape-and-insert logic (without the Lambda handler wra
   "details": { "Movie Title A": 18, "Movie Title B": 11 }
 }
 ```
+
+---
+
+## Troubleshooting
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Lambda crashes with `cannot import name 'etree'` or similar `lxml` error | Layer was built on macOS/Windows without cross-compilation flags | Rebuild the layer using **Method A (CloudShell)** or re-run Method B/C with the `--platform manylinux2014_x86_64 --only-binary=:all:` flags |
+| `ImportError: No module named 'common'` in Lambda logs | `common/` folder is missing from the function zip, or nested at the wrong level | Verify the zip structure: `lambda_function.py` and `common/` must be at the root of the zip (not inside a subfolder). Re-zip using the commands in **Step 2**. |
+| `ServerSelectionTimeoutError` connecting to MongoDB | Wrong `MONGO_URI`, or Lambda's outbound IP is not on Atlas's IP allowlist | Double-check the connection string under **Lambda → Configuration → Environment variables**. In Atlas, go to **Network Access** and add `0.0.0.0/0` (allow all) or the specific Lambda NAT gateway IP. |
+| `weekly` or `monthly` documents show zero titles | Daily Lambda did not run yet for the current period, or ran after the aggregation Lambda | Always invoke in order: **daily → weekly → monthly**. Check CloudWatch Logs for each function to confirm successful execution. |
+| IMDb titles list is empty | IMDb changed their HTML structure (CSS class names) | Inspect the current IMDb trailers page and update the selectors in `common/trailer_scraper.py` (`ipc-poster-card` and `ipc-poster-card__title`). |

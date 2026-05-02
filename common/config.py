@@ -1,3 +1,5 @@
+"""Central configuration constants shared across all Lambda functions and the local dev script."""
+
 DB_NAME = "imdb_trailer"
 DAILY_COLLECTION = "daily"
 WEEKLY_COLLECTION = "weekly"

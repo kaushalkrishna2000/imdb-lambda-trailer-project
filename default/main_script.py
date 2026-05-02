@@ -1,3 +1,15 @@
+"""Local development script that performs one scrape-and-insert cycle into the MongoDB daily collection.
+
+Mirrors the logic of ``daily/lambda_function.py`` but uses ``insert_one`` instead of
+``find_one_and_replace``, so repeated runs accumulate multiple documents rather than
+overwriting the day's record. Intended for verifying IMDb selector validity and
+MongoDB connectivity without deploying to AWS Lambda.
+
+Usage:
+    export MONGO_URI="mongodb+srv://user:pass@cluster.mongodb.net"
+    python -m default.main_script
+"""
+
 import logging
 
 from common.config import DAILY_COLLECTION
